@@ -1,0 +1,14 @@
+[project]
+name = "french-coref-conll"
+version = "0.1.0"
+description = "Scripts for converting existing coreference corpora in French to the CoNLL-U compatible format."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "conllu>=6.0.0",
+    "lxml>=5.3.0",
+    "regex>=2024.11.6",
+    "scipy>=1.15.1",
+    "stanza>=1.10.1",
+    "udapi>=0.3.0",
+]
