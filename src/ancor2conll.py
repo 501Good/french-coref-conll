@@ -2,7 +2,6 @@ import argparse
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from pprint import pprint
 from typing import Dict, List, Any
 
 import stanza
@@ -168,7 +167,7 @@ def create_ud_mentions(ud_doc, ancor_document, ancor2conll_ids):
         for mention_idx in mention_ids:
             try:
                 mention = ancor_document.mentions_dict[mention_idx]
-            except KeyError as e:
+            except KeyError:
                 logging.error(f"Mention {mention_idx} was not found!")
                 continue
             if mention["continuous"]:
@@ -179,7 +178,9 @@ def create_ud_mentions(ud_doc, ancor_document, ancor2conll_ids):
                     start_id = ancor2conll_ids[mention["from"]]
                     end_id = ancor2conll_ids[mention["to"]]
                 except KeyError as e:
-                    logging.error(f"Could not find the word {mention['from']} or {mention['to']} in {ancor_document.file_path}!")
+                    logging.error(
+                        f"Could not find the word {mention['from']} or {mention['to']} in {ancor_document.file_path}!"
+                    )
                     # pprint(ancor2conll_ids)
                     raise e
                 try:
@@ -213,7 +214,27 @@ def create_ud_mentions(ud_doc, ancor_document, ancor2conll_ids):
                     mention_to_ent[mention_idx] = {"eid": ent.eid, "mention": m}
         if len(ent.mentions) > 0:
             ents.append(ent)
-        return mention_to_ent
+
+    bridging_links = {}
+    for bridge_idx, bridge in ancor_document.bridging_dict.items():
+        src, tgt = bridge["target"]
+        rel_tei_path = f'.//tei:fs[@xml:id="{bridge["ana"]}"]/tei:f[@tei:name="type"]/tei:string'
+        rel_element = ancor_document.tree.xpath(rel_tei_path, namespaces=ancor_document.root.nsmap)
+        rel_type = ":pronominal" if rel_element[0].text == "ASSOC_PRONOM" else ""
+        try:
+            if src in bridging_links:
+                bridging_links[src] += f",{mention_to_ent[tgt]['eid']}<{mention_to_ent[src]['eid']}{rel_type}"
+            else:
+                bridging_links[src] = f"{mention_to_ent[tgt]['eid']}<{mention_to_ent[src]['eid']}{rel_type}"
+        except KeyError:
+            logging.error("A mention is missing, skipping...")
+
+    bls = []
+    for src_idx, b_string in bridging_links.items():
+        try:
+            bls.append(BridgingLinks.from_string(b_string, ud_doc.eid_to_entity, ud_doc))
+        except ValueError:
+            logging.error("Something happened while adding a bridging link, skipping...")
 
 
 def sort_feats(ud_doc):
@@ -224,11 +245,7 @@ def sort_feats(ud_doc):
         node_feats = str(node.feats)
         sorted_feats = "|".join(sorted(node_feats.split("|"), key=lambda x: x.lower()))
         if node_feats != sorted_feats:
-            logging.info(
-                
-                        f"Re-sorted feats are different from the original ones: {node_feats} -> {sorted_feats}"
-            
-                    )
+            logging.info(f"Re-sorted feats are different from the original ones: {node_feats} -> {sorted_feats}")
             node.feats = sorted_feats
 
 
@@ -279,28 +296,7 @@ def main():
 
             ud_doc = udapi.Document(f"{stanza_out_dir}/{corpus_name}-{file_path.stem}.conllu")
 
-            mention_to_ent = create_ud_mentions(ud_doc, ancor_document, ancor2conll_ids)
-
-            bridging_links = {}
-            for bridge_idx, bridge in ancor_document.bridging_dict.items():
-                src, tgt = bridge["target"]
-                rel_tei_path = f'.//tei:fs[@xml:id="{bridge["ana"]}"]/tei:f[@tei:name="type"]/tei:string'
-                rel_element = ancor_document.tree.xpath(rel_tei_path, namespaces=ancor_document.root.nsmap)
-                rel_type = ":pronominal" if rel_element[0].text == "ASSOC_PRONOM" else ""
-                try:
-                    if src in bridging_links:
-                        bridging_links[src] += f",{mention_to_ent[tgt]['eid']}<{mention_to_ent[src]['eid']}{rel_type}"
-                    else:
-                        bridging_links[src] = f"{mention_to_ent[tgt]['eid']}<{mention_to_ent[src]['eid']}{rel_type}"
-                except KeyError:
-                    logging.error("A mention is missing, skipping...")
-
-            bls = []
-            for src_idx, b_string in bridging_links.items():
-                try:
-                    bls.append(BridgingLinks.from_string(b_string, ud_doc.eid_to_entity, ud_doc))
-                except ValueError:
-                    logging.error("Something happened while adding a bridging link, skipping...")
+            create_ud_mentions(ud_doc, ancor_document, ancor2conll_ids)
 
             # Add the document name to the first sentence of the document
             ud_doc[0].trees[0].newdoc = f"{corpus_name}-{file_path.stem}"
