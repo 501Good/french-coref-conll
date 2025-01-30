@@ -1,12 +1,12 @@
 import argparse
 import logging
 from pathlib import Path
-from pprint import pprint
 from typing import Any, Dict, List, Optional
 
 import stanza
 import udapi
 from lxml import etree
+from udapi.core.coref import BridgingLinks
 from stanza.models.mwt.utils import resplit_mwt
 from stanza.utils.conll import CoNLL
 from tqdm import tqdm
@@ -44,6 +44,9 @@ class ANCORDocument:
 
         self.chains_dict: Dict[str, List[str]]
         self._parse_chains()
+
+        self.bridging_dict: Dict[str, Dict[str, Any]]
+        self._parse_bridging()
 
     def _parse_words(self):
         self.words_dict = {}
@@ -175,17 +178,28 @@ class ANCORDocument:
         for i, singleton in enumerate(singletons):
             self.chains_dict[f"s-SINGLETON-{i}"] = [singleton]
 
+    def _parse_bridging(self):
+        self.bridging_dict = {}
+        for coref in self.tree.xpath(
+            './/tei:linkGrp[@tei:subtype="associative_anaphora"]/tei:link', namespaces=self.root.nsmap
+        ):
+            self.bridging_dict[coref.get("{http://www.w3.org/XML/1998/namespace}id")] = {
+                "target": [target[1:] for target in coref.get("{http://www.tei-c.org/ns/1.0}target").split(" ")],
+                "ana": coref.get("{http://www.tei-c.org/ns/1.0}ana")[1:],
+            }
+
 
 def create_ud_mentions(ud_doc, ancor_document, ancor2conll_ids):
     trees = list(ud_doc.trees)
     words = [tree.descendants for tree in trees]
     ents = []
+    mention_to_ent = {}
     for chain_id, mention_ids in ancor_document.chains_dict.items():
         ent = ud_doc.create_coref_entity()
         for mention_idx in mention_ids:
             try:
                 mention = ancor_document.mentions_dict[mention_idx]
-            except KeyError as e:
+            except KeyError:
                 logging.error(f"Mention {mention_idx} was not found!")
                 continue
             if mention["continuous"]:
@@ -218,8 +232,30 @@ def create_ud_mentions(ud_doc, ancor_document, ancor2conll_ids):
                     # prev_u = u
                 if len(mention_words) > 0:
                     m = ent.create_mention(words=mention_words)
+                    mention_to_ent[mention_idx] = {"eid": ent.eid, "mention": m}
         if len(ent.mentions) > 0:
             ents.append(ent)
+
+    bridging_links = {}
+    for bridge_idx, bridge in ancor_document.bridging_dict.items():
+        src, tgt = bridge["target"]
+        rel_tei_path = f'.//tei:fs[@xml:id="{bridge["ana"]}"]/tei:f[@tei:name="type"]/tei:string'
+        rel_element = ancor_document.tree.xpath(rel_tei_path, namespaces=ancor_document.root.nsmap)
+        rel_type = ":pronominal" if rel_element[0].text == "ASSOC_PRONOM" else ""
+        try:
+            if src in bridging_links:
+                bridging_links[src] += f",{mention_to_ent[tgt]['eid']}<{mention_to_ent[src]['eid']}{rel_type}"
+            else:
+                bridging_links[src] = f"{mention_to_ent[tgt]['eid']}<{mention_to_ent[src]['eid']}{rel_type}"
+        except KeyError:
+            logging.error("A mention is missing, skipping...")
+
+    bls = []
+    for src_idx, b_string in bridging_links.items():
+        try:
+            bls.append(BridgingLinks.from_string(b_string, ud_doc.eid_to_entity, ud_doc))
+        except ValueError:
+            logging.error("Something happened while adding a bridging link, skipping...")
 
 
 def sort_feats(ud_doc):
