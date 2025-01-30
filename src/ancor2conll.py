@@ -6,6 +6,7 @@ from pprint import pprint
 
 import stanza
 import udapi
+from udapi.core.coref import BridgingLinks
 from lxml import etree
 from stanza.models.mwt.utils import resplit_mwt
 from stanza.utils.conll import CoNLL
@@ -121,7 +122,9 @@ def main():
                 m_words = [target[1:] for target in mention.get("{http://www.tei-c.org/ns/1.0}target").split(" ")]
                 m_id = mention.get("{http://www.w3.org/XML/1998/namespace}id")
                 if len([1 for v in mentions_dict.values() if "words" in v and v["words"][0] == m_words[0]]) > 0:
-                    logging.warning(f"Found a discontinuous mention {m_id} which is overlapping with an existing mention!")
+                    logging.warning(
+                        f"Found a discontinuous mention {m_id} which is overlapping with an existing mention!"
+                    )
                 else:
                     mentions_dict[m_id] = {
                         "continuous": False,
@@ -133,7 +136,16 @@ def main():
             for coref in tree.xpath('.//tei:linkGrp[@tei:subtype="coreference"]/tei:link', namespaces=root.nsmap):
                 corefs_dict[coref.get("{http://www.w3.org/XML/1998/namespace}id")] = {
                     "target": [target[1:] for target in coref.get("{http://www.tei-c.org/ns/1.0}target").split(" ")],
-                    "ana": mention.get("{http://www.tei-c.org/ns/1.0}ana")[1:],
+                    "ana": coref.get("{http://www.tei-c.org/ns/1.0}ana")[1:],
+                }
+
+            bridging_dict = {}
+            for coref in tree.xpath(
+                './/tei:linkGrp[@tei:subtype="associative_anaphora"]/tei:link', namespaces=root.nsmap
+            ):
+                bridging_dict[coref.get("{http://www.w3.org/XML/1998/namespace}id")] = {
+                    "target": [target[1:] for target in coref.get("{http://www.tei-c.org/ns/1.0}target").split(" ")],
+                    "ana": coref.get("{http://www.tei-c.org/ns/1.0}ana")[1:],
                 }
 
             chains_dict = {}
@@ -185,6 +197,7 @@ def main():
             trees = list(ud_doc.trees)
             words = [tree.descendants for tree in trees]
             ents = []
+            mention_to_ent = {}
             for chain_id, mention_ids in chains_dict.items():
                 ent = ud_doc.create_coref_entity()
                 for mention_idx in mention_ids:
@@ -195,17 +208,24 @@ def main():
                         continue
                     if mention["continuous"]:
                         if mention["from"].split(".")[1] != mention["to"].split(".")[1]:
-                            logging.warning(f"Found a continuous multi-sentence mention {mention_idx}, which is not supported!")
+                            logging.warning(
+                                f"Found a continuous multi-sentence mention {mention_idx}, which is not supported!"
+                            )
                             continue
                         try:
                             start_id = ancor2conll_ids[mention["from"]]
                             end_id = ancor2conll_ids[mention["to"]]
                         except KeyError as e:
-                            logging.error(f"Could not find the word {mention['from']} or {mention['to']} in {file_path}!")
+                            logging.error(
+                                f"Could not find the word {mention['from']} or {mention['to']} in {file_path}!"
+                            )
                             # pprint(ancor2conll_ids)
                             raise e
                         try:
-                            m = ent.create_mention(words=words[start_id.sent_id][start_id.token_id - 1 : end_id.token_id])
+                            m = ent.create_mention(
+                                words=words[start_id.sent_id][start_id.token_id - 1 : end_id.token_id]
+                            )
+                            mention_to_ent[mention_idx] = {"eid": ent.eid, "mention": m}
                         except IndexError as e:
                             logging.error(mention, start_id, end_id)
                             raise e
@@ -223,7 +243,9 @@ def main():
                                 break
                             try:
                                 mention_words.append(
-                                    words[ancor2conll_ids[mention_word].sent_id][ancor2conll_ids[mention_word].token_id - 1]
+                                    words[ancor2conll_ids[mention_word].sent_id][
+                                        ancor2conll_ids[mention_word].token_id - 1
+                                    ]
                                 )
                             except IndexError as e:
                                 logging.warning(file_path, ancor2conll_ids[mention_word], mention_word)
@@ -231,8 +253,30 @@ def main():
                             prev_u = u
                         if len(mention_words) > 0:
                             m = ent.create_mention(words=mention_words)
+                            mention_to_ent[mention_idx] = {"eid": ent.eid, "mention": m}
                 if len(ent.mentions) > 0:
                     ents.append(ent)
+
+            bridging_links = {}
+            for bridge_idx, bridge in bridging_dict.items():
+                src, tgt = bridge["target"]
+                rel_tei_path = f'.//tei:fs[@xml:id="{bridge["ana"]}"]/tei:f[@tei:name="type"]/tei:string'
+                rel_element = tree.xpath(rel_tei_path, namespaces=root.nsmap)
+                rel_type = ":pronominal" if rel_element[0].text == "ASSOC_PRONOM" else ""
+                try:
+                    if src in bridging_links:
+                        bridging_links[src] += f",{mention_to_ent[tgt]['eid']}<{mention_to_ent[src]['eid']}{rel_type}"
+                    else:
+                        bridging_links[src] = f"{mention_to_ent[tgt]['eid']}<{mention_to_ent[src]['eid']}{rel_type}"
+                except KeyError:
+                    logging.error("A mention is missing, skipping...")
+
+            bls = []
+            for src_idx, b_string in bridging_links.items():
+                try:
+                    bls.append(BridgingLinks.from_string(b_string, ud_doc.eid_to_entity, ud_doc))
+                except ValueError:
+                    logging.error("Something happened while adding a bridging link, skipping...")
 
             # Add the document name to the first sentence of the document
             ud_doc[0].trees[0].newdoc = f"{corpus_name}-{file_path.stem}"
@@ -244,7 +288,9 @@ def main():
                 node_feats = str(node.feats)
                 sorted_feats = "|".join(sorted(node_feats.split("|"), key=lambda x: x.lower()))
                 if node_feats != sorted_feats:
-                    logging.info(f"Re-sorted feats are different from the original ones: {node_feats} -> {sorted_feats}")
+                    logging.info(
+                        f"Re-sorted feats are different from the original ones: {node_feats} -> {sorted_feats}"
+                    )
                     node.feats = sorted_feats
 
             # Print the newly created coreference entities.
