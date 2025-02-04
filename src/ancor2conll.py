@@ -3,7 +3,7 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 from pprint import pprint
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 
 import stanza
 import udapi
@@ -24,6 +24,65 @@ class CoNLLTokenLocation:
 
     def __repr__(self):
         return f"{self.sent_id}#{self.token_id}"
+
+
+class WordIndex:
+    def __init__(self, section: int = 0, utterance: int = 0, word: int = 0):
+        self._section = section
+        self._utterance = utterance
+        self._word = word
+
+    @classmethod
+    def from_string(cls, string: str) -> None:
+        """Initialise a word index from a string like "#s19.u20.w9"."""
+        try:
+            if string.endswith(".dash"):
+                s, u, w, _ = string.split(".")
+            else:
+                s, u, w = string.split(".")
+        except ValueError:
+            raise ValueError(f'The string must be in format "#s0.u0.w0" for got "{string}" instead!')
+        if s.startswith("#"):
+            s = s[1:]
+        return cls(int(s[1:]), int(u[1:]), int(w[1:]))
+    
+    @property
+    def s(self):
+        return self._section
+    
+    @s.setter
+    def s(self, value):
+        self._section = int(value)
+
+    @property
+    def u(self):
+        return self._utterance
+    
+    @u.setter
+    def u(self, value):
+        self._utterance = int(value)
+
+    @property
+    def w(self):
+        return self._word
+    
+    @w.setter
+    def w(self, value):
+        self._word = int(value)
+
+    def __repr__(self):
+        return f"s{self.s}.u{self.u}.w{self.w}"
+
+    def __str__(self):
+        return self.__repr__()
+
+    def __hash__(self):
+        return hash(self.__repr__())
+
+    def __eq__(self, other):
+        if isinstance(other, WordIndex):
+            return self.s == other.s and self.u == other.u and self.w == other.w
+        return False
 
 
 data_path = Path("data")
@@ -64,17 +123,10 @@ class ANCORDocument:
         prev_u = None
         prev_s = None
         for i, word in enumerate(self.tree.xpath(".//tei:w | .//tei:pc", namespaces=self.root.nsmap)):
-            word_id = word.get("{http://www.w3.org/XML/1998/namespace}id")
+            word_id = WordIndex.from_string(word.get("{http://www.w3.org/XML/1998/namespace}id"))
+            s, u = word_id.s, word_id.u
             self.words_dict[word_id] = word.text
             self.words_ids.append(word_id)
-            try:
-                if ".dash" in word_id:
-                    s, u, _, _ = word_id.split(".")
-                else:
-                    s, u, _ = word_id.split(".")
-            except ValueError as e:
-                logging.error(f"Tried to split '{word_id}' but failed! Perhaps it is badly formatted?")
-                raise e
             if i == 0:
                 sentence.append(word.text)
             elif i > 0 and u != prev_u:
@@ -97,32 +149,62 @@ class ANCORDocument:
         for mention in self.tree.xpath('.//tei:spanGrp[@tei:subtype="mention"]/tei:span', namespaces=self.root.nsmap):
             self.mentions_dict[mention.get("{http://www.w3.org/XML/1998/namespace}id")] = {
                 "continuous": True,
-                "from": mention.get("{http://www.tei-c.org/ns/1.0}from")[1:],
-                "to": mention.get("{http://www.tei-c.org/ns/1.0}to")[1:],
+                "from": WordIndex.from_string(mention.get("{http://www.tei-c.org/ns/1.0}from")),
+                "to": WordIndex.from_string(mention.get("{http://www.tei-c.org/ns/1.0}to")),
                 "ana": mention.get("{http://www.tei-c.org/ns/1.0}ana")[1:],
             }
 
         for mention in self.tree.xpath('.//tei:spanGrp[@tei:subtype="expletive"]/tei:span', namespaces=self.root.nsmap):
             self.mentions_dict[mention.get("{http://www.w3.org/XML/1998/namespace}id")] = {
                 "continuous": True,
-                "from": mention.get("{http://www.tei-c.org/ns/1.0}from")[1:],
-                "to": mention.get("{http://www.tei-c.org/ns/1.0}to")[1:],
+                "from": WordIndex.from_string(mention.get("{http://www.tei-c.org/ns/1.0}from")),
+                "to": WordIndex.from_string(mention.get("{http://www.tei-c.org/ns/1.0}to")),
                 "ana": mention.get("{http://www.tei-c.org/ns/1.0}ana")[1:],
             }
 
         for mention in self.tree.xpath(
             './/tei:spanGrp[@tei:subtype="mention.discontinuous"]/tei:span', namespaces=self.root.nsmap
         ):
-            m_words = [target[1:] for target in mention.get("{http://www.tei-c.org/ns/1.0}target").split(" ")]
+            m_words = [
+                WordIndex.from_string(target)
+                for target in mention.get("{http://www.tei-c.org/ns/1.0}target").split(" ")
+            ]
             m_id = mention.get("{http://www.w3.org/XML/1998/namespace}id")
-            if len([1 for v in self.mentions_dict.values() if "words" in v and v["words"][0] == m_words[0]]) > 0:
-                logging.warning(f"Found a discontinuous mention {m_id} which is overlapping with an existing mention!")
-            else:
+
+            # It seems that in the original dataset, the words are sorted using their string representations
+            # when constructing discontinuous mentions. Thus, some of the discontinuous mentions are, in face, continuous.
+            # For example, "#s19.u20.w10 #s19.u20.w11 #s19.u20.w9"
+            # So, we will resort the words properly to ensure correct coversion.
+            m_words = sorted(m_words, key=lambda x: x.w)
+
+            # And then check if the sorted words make a continuous mention
+            is_continuous = True
+            for i in range(1, len(m_words)):
+                if m_words[i].w - 1 != m_words[i - 1].w:
+                    is_continuous = False
+                    break
+
+            if is_continuous:
+                logging.info(
+                    f"The mention with id {m_id} is marked as discontinuous but is actually continuous with the following word ids: {m_words}"
+                )
                 self.mentions_dict[m_id] = {
-                    "continuous": False,
+                    "continuous": is_continuous,
+                    "from": m_words[0],
+                    "to": m_words[-1],
+                    "ana": mention.get("{http://www.tei-c.org/ns/1.0}ana")[1:],
+                }
+            else:
+                overlapping = [k for k, v in self.mentions_dict.items() if "words" in v and v["words"][0] == m_words[0]]
+                if len(overlapping) > 0:
+                    logging.warning(f"Found a discontinuous mention {m_id} which is overlapping with an existing mentions {overlapping}!")
+                    continue
+                self.mentions_dict[m_id] = {
+                    "continuous": is_continuous,
                     "words": m_words,
                     "ana": mention.get("{http://www.tei-c.org/ns/1.0}ana")[1:],
                 }
+
 
     def _parse_chains(self):
         self.chains_dict = {}
@@ -135,7 +217,7 @@ class ANCORDocument:
                 self.chains_dict[f"s-EXPLETIVE-{i}"] = [mention_id]
 
         singletons = []
-        in_chain = [m for k, chain in self.chains_dict.items() for m in chain if "EXPLETIVE" not in m]
+        in_chain = [m for k, chain in self.chains_dict.items() for m in chain]
         for mention in self.mentions_dict.keys():
             if mention not in in_chain:
                 singletons.append(mention)
@@ -157,14 +239,17 @@ def create_ud_mentions(ud_doc, ancor_document, ancor2conll_ids):
                 logging.error(f"Mention {mention_idx} was not found!")
                 continue
             if mention["continuous"]:
-                if mention["from"].split(".")[1] != mention["to"].split(".")[1]:
-                    logging.warning(f"Found a continuous multi-sentence mention {mention_idx}, which is not supported!")
+                if mention["from"].u != mention["to"].u:
+                    logging.warning(f"Found a continuous cross-sentence mention {mention_idx}, which is not supported!")
                     continue
                 try:
                     start_id = ancor2conll_ids[mention["from"]]
                     end_id = ancor2conll_ids[mention["to"]]
                 except KeyError as e:
-                    logging.error(f"Could not find the word {mention['from']} or {mention['to']} in {ancor_document.file_path}!")
+                    logging.error(
+                        f"Could not find the word {mention['from']} or {mention['to']} in {ancor_document.file_path}!"
+                    )
+                    logging.error(ancor2conll_ids)
                     # pprint(ancor2conll_ids)
                     raise e
                 try:
@@ -174,13 +259,13 @@ def create_ud_mentions(ud_doc, ancor_document, ancor2conll_ids):
                     raise e
             else:
                 # TODO: Add support for discontinuous mentions
-                prev_u = mention["words"][0].split(".")[1]
+                prev_u = mention["words"][0].u
                 mention_words = []
                 for i, mention_word in enumerate(mention["words"]):
-                    u = mention_word.split(".")[1]
+                    u = mention_word.u
                     if i != 0 and prev_u != u:
                         logging.warning(
-                            f"Found a discontinuous multi-sentence mention {mention_idx}, which is not supported!"
+                            f"Found a discontinuous cross-sentence mention {mention_idx}, which is not supported!"
                         )
                         mention_words = []
                         break
@@ -197,6 +282,7 @@ def create_ud_mentions(ud_doc, ancor_document, ancor2conll_ids):
         if len(ent.mentions) > 0:
             ents.append(ent)
 
+
 def sort_feats(ud_doc):
     # Somewhere along the processing pipeline (I guess in stanza), the FEATS are not properly sorted.
     # This causes the UD validation to fail.
@@ -205,9 +291,7 @@ def sort_feats(ud_doc):
         node_feats = str(node.feats)
         sorted_feats = "|".join(sorted(node_feats.split("|"), key=lambda x: x.lower()))
         if node_feats != sorted_feats:
-            logging.info(
-                f"Re-sorted feats are different from the original ones: {node_feats} -> {sorted_feats}"
-            )
+            logging.info(f"Re-sorted feats are different from the original ones: {node_feats} -> {sorted_feats}")
             node.feats = sorted_feats
 
 
@@ -249,8 +333,8 @@ def main():
                     # In French, the multi-word tokens are amalgams (ex. aux = à + les).
                     # In case the mention starts with a multi-word token in the original file, we don't want to include a preposition in it.
                     # Thus the last token id is taken every time.
-                    ancor2conll_ids[ancor_document.words_ids[total_word_count - 1]] = CoNLLTokenLocation(
-                        sent_id=sent_id, token_id=token.id[-1]
+                    ancor2conll_ids[ancor_document.words_ids[total_word_count - 1]] = (
+                        CoNLLTokenLocation(sent_id=sent_id, token_id=token.id[-1])
                     )
                     total_word_count += 1
 
