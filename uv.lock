@@ -101,7 +101,7 @@ requires-dist = [
     { name = "regex", specifier = ">=2024.11.6" },
     { name = "scipy", specifier = ">=1.15.1" },
     { name = "stanza", specifier = ">=1.10.1" },
-    { name = "udapi", specifier = ">=0.3.0" },
+    { name = "udapi", git = "https://github.com/udapi/udapi-python.git" },
 ]
 
 [[package]]
@@ -608,14 +608,10 @@ wheels = [
 [[package]]
 name = "udapi"
 version = "0.3.0"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/udapi/udapi-python.git#ebf6e394b1dfc6ad29fe20b4dbd72d0c51a4a319" }
 dependencies = [
     { name = "colorama" },
     { name = "termcolor" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/13/9c/8e8eefd91d61f7466b9682e79be6bb96f51ee153b0cb6ff3b30b49a1d74f/udapi-0.3.0.tar.gz", hash = "sha256:4067215f53be330676b0a16e7c1a27ef49ace2f7d4208846dc147c26f15ef9e9", size = 194781 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/4a/78/6e0769e8ccb78405cb904c9ebf76e75cf2bb9ca822688bf79065043835e0/udapi-0.3.0-py3-none-any.whl", hash = "sha256:edb16fb798eae44d94fab93a9a95e6fc2186fe0d194448e7d37ad05bd8fc7d27", size = 254364 },
 ]
 
 [[package]]
