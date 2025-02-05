@@ -45,11 +45,11 @@ class WordIndex:
         if s.startswith("#"):
             s = s[1:]
         return cls(int(s[1:]), int(u[1:]), int(w[1:]))
-    
+
     @property
     def s(self):
         return self._section
-    
+
     @s.setter
     def s(self, value):
         self._section = int(value)
@@ -57,7 +57,7 @@ class WordIndex:
     @property
     def u(self):
         return self._utterance
-    
+
     @u.setter
     def u(self, value):
         self._utterance = int(value)
@@ -65,7 +65,7 @@ class WordIndex:
     @property
     def w(self):
         return self._word
-    
+
     @w.setter
     def w(self, value):
         self._word = int(value)
@@ -195,23 +195,32 @@ class ANCORDocument:
                     "ana": mention.get("{http://www.tei-c.org/ns/1.0}ana")[1:],
                 }
             else:
-                overlapping = [k for k, v in self.mentions_dict.items() if "words" in v and v["words"][0] == m_words[0]]
-                if len(overlapping) > 0:
-                    logging.warning(f"Found a discontinuous mention {m_id} which is overlapping with an existing mentions {overlapping}!")
-                    continue
                 self.mentions_dict[m_id] = {
                     "continuous": is_continuous,
                     "words": m_words,
                     "ana": mention.get("{http://www.tei-c.org/ns/1.0}ana")[1:],
                 }
 
-
     def _parse_chains(self):
         self.chains_dict = {}
         for chain in self.tree.xpath('.//tei:linkGrp[@tei:subtype="chain"]/tei:link', namespaces=self.root.nsmap):
-            self.chains_dict[chain.get("{http://www.w3.org/XML/1998/namespace}id")] = [
-                target[1:] for target in chain.get("{http://www.tei-c.org/ns/1.0}target").split(" ")
-            ]
+            chain_mentions = [target[1:] for target in chain.get("{http://www.tei-c.org/ns/1.0}target").split(" ")]
+            overlapping = []
+            for i in range(len(chain_mentions) - 1):
+                for j in range(i + 1, len(chain_mentions)):
+                    if (
+                        not self.mentions_dict[chain_mentions[i]]["continuous"]
+                        and not self.mentions_dict[chain_mentions[j]]["continuous"]
+                        and self.mentions_dict[chain_mentions[i]]["words"][0]
+                        == self.mentions_dict[chain_mentions[j]]["words"][0]
+                    ):
+                        logging.warning(
+                            f"Found two overlapping discontinuous mentions {chain_mentions[i]} and {chain_mentions[j]} in the same corerefence chain! The second one ({chain_mentions[i]}) will be removed."
+                        )
+                        overlapping.append(j)
+            for o in sorted(overlapping, reverse=True):
+                del chain_mentions[o]
+            self.chains_dict[chain.get("{http://www.w3.org/XML/1998/namespace}id")] = chain_mentions
         for i, (mention_id, _) in enumerate(self.mentions_dict.items()):
             if "EXPLETIVE" in mention_id:
                 self.chains_dict[f"s-EXPLETIVE-{i}"] = [mention_id]
@@ -333,8 +342,8 @@ def main():
                     # In French, the multi-word tokens are amalgams (ex. aux = à + les).
                     # In case the mention starts with a multi-word token in the original file, we don't want to include a preposition in it.
                     # Thus the last token id is taken every time.
-                    ancor2conll_ids[ancor_document.words_ids[total_word_count - 1]] = (
-                        CoNLLTokenLocation(sent_id=sent_id, token_id=token.id[-1])
+                    ancor2conll_ids[ancor_document.words_ids[total_word_count - 1]] = CoNLLTokenLocation(
+                        sent_id=sent_id, token_id=token.id[-1]
                     )
                     total_word_count += 1
 
