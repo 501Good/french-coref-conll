@@ -333,8 +333,7 @@ def main():
             ancor2conll_ids = {}
             total_word_count = 1
             for sent_id, (ancor_id, sentence) in enumerate(zip(ancor_document.sentence_ids, doc.sentences)):
-                sentence.sent_id = f"{file_path.stem}.{ancor_id}"
-                sentence.doc_id = file_path.stem
+                sentence.sent_id = f"{corpus_name}-{file_path.stem}.{ancor_id}"
                 for token_id, token in enumerate(sentence.tokens):
                     # We will need the mapping from the original word ids to the sentence and token ids in the CoNLL output later.
                     # `stanza` stores all the token ids in a tuple, so a single-word token will have an id like `(1,)`.
