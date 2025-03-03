@@ -172,7 +172,7 @@ class ANCORDocument:
             m_id = mention.get("{http://www.w3.org/XML/1998/namespace}id")
 
             # It seems that in the original dataset, the words are sorted using their string representations
-            # when constructing discontinuous mentions. Thus, some of the discontinuous mentions are, in face, continuous.
+            # when constructing discontinuous mentions. Thus, some of the discontinuous mentions are, in fact, continuous.
             # For example, "#s19.u20.w10 #s19.u20.w11 #s19.u20.w9"
             # So, we will resort the words properly to ensure correct coversion.
             m_words = sorted(m_words, key=lambda x: x.w)
