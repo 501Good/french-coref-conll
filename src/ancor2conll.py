@@ -175,14 +175,22 @@ class ANCORDocument:
             # when constructing discontinuous mentions. Thus, some of the discontinuous mentions are, in fact, continuous.
             # For example, "#s19.u20.w10 #s19.u20.w11 #s19.u20.w9"
             # So, we will resort the words properly to ensure correct coversion.
-            m_words = sorted(m_words, key=lambda x: x.w)
+            m_words = sorted(m_words, key=lambda x: (x.u, x.w))
 
             # And then check if the sorted words make a continuous mention
             is_continuous = True
+            is_cross_sentence = False
+            d_spans = []
+            d_span = [m_words[0]]
             for i in range(1, len(m_words)):
                 if m_words[i].w - 1 != m_words[i - 1].w:
                     is_continuous = False
-                    break
+                    d_spans.append(d_span + [m_words[i - 1]])
+                    d_span = [m_words[i]]
+                if m_words[i].u != m_words[i - 1].u:
+                    is_cross_sentence = True
+                    logging.info(f"Found cross-sentence mention {m_words} in {self.file_path}")
+            d_spans.append(d_span + [m_words[-1]])
 
             if is_continuous:
                 logging.info(
@@ -190,6 +198,7 @@ class ANCORDocument:
                 )
                 self.mentions_dict[m_id] = {
                     "continuous": is_continuous,
+                    "cross-sentence": is_cross_sentence,
                     "from": m_words[0],
                     "to": m_words[-1],
                     "ana": mention.get("{http://www.tei-c.org/ns/1.0}ana")[1:],
@@ -197,7 +206,8 @@ class ANCORDocument:
             else:
                 self.mentions_dict[m_id] = {
                     "continuous": is_continuous,
-                    "words": m_words,
+                    "cross-sentence": is_cross_sentence,
+                    "words": d_spans,
                     "ana": mention.get("{http://www.tei-c.org/ns/1.0}ana")[1:],
                 }
 
@@ -266,26 +276,17 @@ def create_ud_mentions(ud_doc, ancor_document, ancor2conll_ids):
                 except IndexError as e:
                     logging.error(mention, start_id, end_id)
                     raise e
+            elif not mention["continuous"] and mention["cross-sentence"]:
+                logging.warning(
+                    f"Found a discontinuous cross-sentence mention {mention_idx}, which is not supported!"
+                )
             else:
-                # TODO: Add support for discontinuous mentions
-                prev_u = mention["words"][0].u
                 mention_words = []
-                for i, mention_word in enumerate(mention["words"]):
-                    u = mention_word.u
-                    if i != 0 and prev_u != u:
-                        logging.warning(
-                            f"Found a discontinuous cross-sentence mention {mention_idx}, which is not supported!"
-                        )
-                        mention_words = []
-                        break
-                    try:
-                        mention_words.append(
-                            words[ancor2conll_ids[mention_word].sent_id][ancor2conll_ids[mention_word].token_id - 1]
-                        )
-                    except IndexError as e:
-                        logging.warning(ancor_document.file_path, ancor2conll_ids[mention_word], mention_word)
-                        raise e
-                    prev_u = u
+                for i, word_span in enumerate(mention["words"]):
+                    start_id = ancor2conll_ids[word_span[0]]
+                    end_id = ancor2conll_ids[word_span[-1]]
+                    mention_words += words[start_id.sent_id][start_id.token_id - 1 : end_id.token_id]
+                    # prev_u = u
                 if len(mention_words) > 0:
                     m = ent.create_mention(words=mention_words)
         if len(ent.mentions) > 0:
