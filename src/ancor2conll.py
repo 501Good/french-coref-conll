@@ -1,9 +1,8 @@
 import argparse
 import logging
-from dataclasses import dataclass
 from pathlib import Path
 from pprint import pprint
-from typing import Dict, List, Any, Optional
+from typing import Any, Dict, List, Optional
 
 import stanza
 import udapi
@@ -13,77 +12,8 @@ from stanza.utils.conll import CoNLL
 from tqdm import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 
-
-@dataclass
-class CoNLLTokenLocation:
-    sent_id: int
-    token_id: int
-
-    def __hash__(self):
-        return hash((self.sent_id, self.token_id))
-
-    def __repr__(self):
-        return f"{self.sent_id}#{self.token_id}"
-
-
-class WordIndex:
-    def __init__(self, section: int = 0, utterance: int = 0, word: int = 0):
-        self._section = section
-        self._utterance = utterance
-        self._word = word
-
-    @classmethod
-    def from_string(cls, string: str) -> None:
-        """Initialise a word index from a string like "#s19.u20.w9"."""
-        try:
-            if string.endswith(".dash"):
-                s, u, w, _ = string.split(".")
-            else:
-                s, u, w = string.split(".")
-        except ValueError:
-            raise ValueError(f'The string must be in format "#s0.u0.w0" for got "{string}" instead!')
-        if s.startswith("#"):
-            s = s[1:]
-        return cls(int(s[1:]), int(u[1:]), int(w[1:]))
-
-    @property
-    def s(self):
-        return self._section
-
-    @s.setter
-    def s(self, value):
-        self._section = int(value)
-
-    @property
-    def u(self):
-        return self._utterance
-
-    @u.setter
-    def u(self, value):
-        self._utterance = int(value)
-
-    @property
-    def w(self):
-        return self._word
-
-    @w.setter
-    def w(self, value):
-        self._word = int(value)
-
-    def __repr__(self):
-        return f"s{self.s}.u{self.u}.w{self.w}"
-
-    def __str__(self):
-        return self.__repr__()
-
-    def __hash__(self):
-        return hash(self.__repr__())
-
-    def __eq__(self, other):
-        if isinstance(other, WordIndex):
-            return self.s == other.s and self.u == other.u and self.w == other.w
-        return False
-
+from ancor_patch import apply_patch
+from ancor_utils import CoNLLTokenLocation, WordIndex
 
 data_path = Path("data")
 
@@ -110,6 +40,7 @@ class ANCORDocument:
 
         self.mentions_dict: Dict[str, Dict[str, Any]]
         self._parse_mentions()
+        apply_patch(self.mentions_dict)
 
         self.chains_dict: Dict[str, List[str]]
         self._parse_chains()
@@ -277,9 +208,7 @@ def create_ud_mentions(ud_doc, ancor_document, ancor2conll_ids):
                     logging.error(mention, start_id, end_id)
                     raise e
             elif not mention["continuous"] and mention["cross-sentence"]:
-                logging.warning(
-                    f"Found a discontinuous cross-sentence mention {mention_idx}, which is not supported!"
-                )
+                logging.warning(f"Found a discontinuous cross-sentence mention {mention_idx}, which is not supported!")
             else:
                 mention_words = []
                 for i, word_span in enumerate(mention["words"]):
