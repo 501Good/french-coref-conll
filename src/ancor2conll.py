@@ -5,13 +5,12 @@ from typing import Any, Dict, List, Optional
 
 import stanza
 import udapi
-from udapi.core.coref import BridgingLinks
 from lxml import etree
-from udapi.core.coref import BridgingLinks, CorefMention
 from stanza.models.mwt.utils import resplit_mwt
 from stanza.utils.conll import CoNLL
 from tqdm import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
+from udapi.core.coref import BridgingLinks, CorefMention
 
 from ancor_patch import apply_patch
 from ancor_utils import CoNLLTokenLocation, WordIndex
