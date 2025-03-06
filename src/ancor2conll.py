@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 import stanza
 import udapi
 from lxml import etree
-from udapi.core.coref import BridgingLinks
+from udapi.core.coref import BridgingLinks, CorefMention
 from stanza.models.mwt.utils import resplit_mwt
 from stanza.utils.conll import CoNLL
 from tqdm import tqdm
@@ -197,6 +197,7 @@ def create_ud_mentions(ud_doc, ancor_document, ancor2conll_ids):
     for chain_id, mention_ids in ancor_document.chains_dict.items():
         ent = ud_doc.create_coref_entity()
         for mention_idx in mention_ids:
+            m: Optional[CorefMention] = None
             try:
                 mention = ancor_document.mentions_dict[mention_idx]
             except KeyError:
@@ -232,13 +233,14 @@ def create_ud_mentions(ud_doc, ancor_document, ancor2conll_ids):
                     # prev_u = u
                 if len(mention_words) > 0:
                     m = ent.create_mention(words=mention_words)
-                    mention_to_ent[mention_idx] = {"eid": ent.eid, "mention": m}
+            if m:
+                mention_to_ent[mention_idx] = {"eid": ent.eid, "mention": m}
         if len(ent.mentions) > 0:
             ents.append(ent)
 
     bridging_links = {}
     for bridge_idx, bridge in ancor_document.bridging_dict.items():
-        src, tgt = bridge["target"]
+        tgt, src = bridge["target"]
         rel_tei_path = f'.//tei:fs[@xml:id="{bridge["ana"]}"]/tei:f[@tei:name="type"]/tei:string'
         rel_element = ancor_document.tree.xpath(rel_tei_path, namespaces=ancor_document.root.nsmap)
         rel_type = ":pronominal" if rel_element[0].text == "ASSOC_PRONOM" else ""
@@ -248,7 +250,7 @@ def create_ud_mentions(ud_doc, ancor_document, ancor2conll_ids):
             else:
                 bridging_links[src] = f"{mention_to_ent[tgt]['eid']}<{mention_to_ent[src]['eid']}{rel_type}"
         except KeyError:
-            logging.error("A mention is missing, skipping...")
+            logging.error(f"Tried to create a bridging link from {tgt} to {src} but a mention was missing, skipping...")
 
     bls = []
     for src_idx, b_string in bridging_links.items():
