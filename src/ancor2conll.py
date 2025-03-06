@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 
 import stanza
 import udapi
+from udapi.core.coref import BridgingLinks
 from lxml import etree
 from udapi.core.coref import BridgingLinks, CorefMention
 from stanza.models.mwt.utils import resplit_mwt
@@ -219,6 +220,7 @@ def create_ud_mentions(ud_doc, ancor_document, ancor2conll_ids):
                     raise e
                 try:
                     m = ent.create_mention(words=words[start_id.sent_id][start_id.token_id - 1 : end_id.token_id])
+                    mention_to_ent[mention_idx] = {"eid": ent.eid, "mention": m}
                 except IndexError as e:
                     logging.error(mention, start_id, end_id)
                     raise e
